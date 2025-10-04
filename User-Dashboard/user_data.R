@@ -200,6 +200,114 @@ export_user_data <- function(user_data, format = "csv") {
   return(filename)
 }
 
+# Data Persistence Functions
+DATA_FILE <- "user_data.csv"
+BACKUP_DIR <- "backups"
+
+# Create backup directory if it doesn't exist
+create_backup_dir <- function() {
+  if (!dir.exists(BACKUP_DIR)) {
+    dir.create(BACKUP_DIR, recursive = TRUE)
+  }
+}
+
+# Save user data to CSV file
+save_user_data <- function(user_data) {
+  tryCatch({
+    # Create backup directory
+    create_backup_dir()
+    
+    # Create backup of existing data if file exists
+    if (file.exists(DATA_FILE)) {
+      timestamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
+      backup_file <- file.path(BACKUP_DIR, paste0("user_data_backup_", timestamp, ".csv"))
+      file.copy(DATA_FILE, backup_file)
+    }
+    
+    # Save current data
+    write.csv(user_data, DATA_FILE, row.names = FALSE)
+    
+    return(TRUE)
+  }, error = function(e) {
+    warning(paste("Failed to save user data:", e$message))
+    return(FALSE)
+  })
+}
+
+# Load user data from CSV file
+load_user_data <- function() {
+  tryCatch({
+    if (file.exists(DATA_FILE)) {
+      data <- read.csv(DATA_FILE, stringsAsFactors = FALSE)
+      
+      # Ensure all required columns exist
+      required_cols <- c("name", "id", "profession", "email", "phone", "birth_date", 
+                        "gender", "address", "company", "position", "experience", 
+                        "skills", "education", "linkedin", "bio", "registration_date")
+      
+      missing_cols <- setdiff(required_cols, names(data))
+      if (length(missing_cols) > 0) {
+        for (col in missing_cols) {
+          data[[col]] <- if (col == "experience") 0 else ""
+        }
+      }
+      
+      return(data)
+    } else {
+      # Return empty data frame if file doesn't exist
+      return(initialize_user_data())
+    }
+  }, error = function(e) {
+    warning(paste("Failed to load user data:", e$message))
+    return(initialize_user_data())
+  })
+}
+
+# Auto-save function (called after data changes)
+auto_save_data <- function(user_data) {
+  success <- save_user_data(user_data)
+  if (success) {
+    message("Data saved successfully")
+  } else {
+    message("Failed to save data")
+  }
+  return(success)
+}
+
+# Restore data from backup
+restore_from_backup <- function(backup_file) {
+  tryCatch({
+    if (file.exists(backup_file)) {
+      backup_data <- read.csv(backup_file, stringsAsFactors = FALSE)
+      save_user_data(backup_data)
+      return(backup_data)
+    } else {
+      stop("Backup file not found")
+    }
+  }, error = function(e) {
+    warning(paste("Failed to restore from backup:", e$message))
+    return(NULL)
+  })
+}
+
+# List available backups
+list_backups <- function() {
+  create_backup_dir()
+  backup_files <- list.files(BACKUP_DIR, pattern = "user_data_backup_.*\\.csv", full.names = TRUE)
+  if (length(backup_files) > 0) {
+    file_info <- file.info(backup_files)
+    backup_list <- data.frame(
+      file = basename(backup_files),
+      date = file_info$mtime,
+      size = file_info$size,
+      stringsAsFactors = FALSE
+    )
+    return(backup_list[order(backup_list$date, decreasing = TRUE), ])
+  } else {
+    return(data.frame())
+  }
+}
+
 # Generate sample data for testing
 generate_sample_data <- function(n = 5) {
   sample_names <- c("John Smith", "Sarah Johnson", "Michael Brown", "Emily Davis", "David Wilson",

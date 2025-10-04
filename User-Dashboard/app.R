@@ -12,7 +12,8 @@ source("user_data.R")
 source("dashboard_cards.R")
 source("styles.R")
 
-user_data <- initialize_user_data()
+# Load existing user data or initialize empty data
+user_data <- load_user_data()
 ui <- dashboardPage(
   dashboardHeader(
     title = "User Dashboard",
@@ -35,6 +36,7 @@ ui <- dashboardPage(
       menuItem("Add User", tabName = "add_user", icon = icon("user-plus")),
       menuItem("User List", tabName = "user_list", icon = icon("list")),
       menuItem("Analytics", tabName = "analytics", icon = icon("chart-bar")),
+      menuItem("Data Management", tabName = "data_mgmt", icon = icon("database")),
       br(),
       div(
         style = "padding: 20px;",
@@ -165,6 +167,58 @@ ui <- dashboardPage(
             )
           )
         )
+      ),
+      
+      # Data Management Tab
+      tabItem(
+        tabName = "data_mgmt",
+        fluidRow(
+          column(12, h2("Data Management", style = "color: #2c3e50; margin-bottom: 30px;"))
+        ),
+        fluidRow(
+          column(6,
+            div(
+              class = "form-container",
+              h3("Data Operations", style = "color: #34495e; margin-bottom: 20px;"),
+              br(),
+              actionButton("save_data_btn", "Save Data Now", 
+                         class = "btn btn-success btn-lg",
+                         style = "width: 100%; padding: 15px; font-size: 16px; margin-bottom: 10px;"),
+              br(),
+              actionButton("load_sample_btn", "Load Sample Data", 
+                         class = "btn btn-info btn-lg",
+                         style = "width: 100%; padding: 15px; font-size: 16px; margin-bottom: 10px;"),
+              br(),
+              actionButton("export_data_btn", "Export Data", 
+                         class = "btn btn-warning btn-lg",
+                         style = "width: 100%; padding: 15px; font-size: 16px; margin-bottom: 10px;"),
+              br(),
+              div(
+                style = "background: #f8f9fa; padding: 15px; border-radius: 5px; margin-top: 20px;",
+                h4("Data Status", style = "color: #2c3e50; margin-bottom: 10px;"),
+                p(textOutput("data_status"), style = "margin: 5px 0;"),
+                p(textOutput("last_saved"), style = "margin: 5px 0;"),
+                p(textOutput("total_records"), style = "margin: 5px 0;")
+              )
+            )
+          ),
+          column(6,
+            div(
+              class = "form-container",
+              h3("Backup Management", style = "color: #34495e; margin-bottom: 20px;"),
+              br(),
+              actionButton("create_backup_btn", "Create Backup", 
+                         class = "btn btn-primary btn-lg",
+                         style = "width: 100%; padding: 15px; font-size: 16px; margin-bottom: 10px;"),
+              br(),
+              div(
+                style = "background: #f8f9fa; padding: 15px; border-radius: 5px; margin-top: 20px;",
+                h4("Available Backups", style = "color: #2c3e50; margin-bottom: 10px;"),
+                DT::dataTableOutput("backup_table")
+              )
+            )
+          )
+        )
       )
     )
   )
@@ -201,6 +255,9 @@ server <- function(input, output, session) {
       current_users <- rbind(current_users, new_user)
       users(current_users)
       
+      # Save data to file
+      save_success <- auto_save_data(current_users)
+      
       # Clear form
       lapply(c("user_name", "user_id", "email", "phone", "company", 
                "position", "skills", "linkedin", "bio"), function(x) {
@@ -208,7 +265,11 @@ server <- function(input, output, session) {
       })
       updateNumericInput(session, "experience", value = 0)
       
-      showNotification("User added successfully!", type = "success")
+      if (save_success) {
+        showNotification("User added and saved successfully!", type = "success")
+      } else {
+        showNotification("User added but failed to save data!", type = "warning")
+      }
     } else {
       showNotification("Please fill in required fields (Name and ID)", type = "error")
     }
@@ -324,6 +385,105 @@ server <- function(input, output, session) {
   
   output$active_users <- renderText({
     nrow(users()) # Assuming all users are active for now
+  })
+  
+  # Data Management Server Logic
+  
+  # Save data manually
+  observeEvent(input$save_data_btn, {
+    current_data <- users()
+    save_success <- auto_save_data(current_data)
+    if (save_success) {
+      showNotification("Data saved successfully!", type = "success")
+    } else {
+      showNotification("Failed to save data!", type = "error")
+    }
+  })
+  
+  # Load sample data
+  observeEvent(input$load_sample_btn, {
+    sample_data <- generate_sample_data(5)
+    current_data <- users()
+    
+    # Check for ID conflicts and adjust if needed
+    existing_ids <- current_data$id
+    for (i in 1:nrow(sample_data)) {
+      while (sample_data$id[i] %in% existing_ids) {
+        sample_data$id[i] <- paste0("USR", sprintf("%03d", as.numeric(substr(sample_data$id[i], 4, 6)) + 1))
+      }
+      existing_ids <- c(existing_ids, sample_data$id[i])
+    }
+    
+    combined_data <- rbind(current_data, sample_data)
+    users(combined_data)
+    
+    save_success <- auto_save_data(combined_data)
+    if (save_success) {
+      showNotification("Sample data loaded and saved successfully!", type = "success")
+    } else {
+      showNotification("Sample data loaded but failed to save!", type = "warning")
+    }
+  })
+  
+  # Export data
+  observeEvent(input$export_data_btn, {
+    current_data <- users()
+    if (nrow(current_data) > 0) {
+      filename <- export_user_data(current_data, "csv")
+      showNotification(paste("Data exported to:", filename), type = "success")
+    } else {
+      showNotification("No data to export!", type = "warning")
+    }
+  })
+  
+  # Create backup
+  observeEvent(input$create_backup_btn, {
+    current_data <- users()
+    save_success <- auto_save_data(current_data)
+    if (save_success) {
+      showNotification("Backup created successfully!", type = "success")
+    } else {
+      showNotification("Failed to create backup!", type = "error")
+    }
+  })
+  
+  # Data status outputs
+  output$data_status <- renderText({
+    if (file.exists("user_data.csv")) {
+      "Data file exists"
+    } else {
+      "No data file found"
+    }
+  })
+  
+  output$last_saved <- renderText({
+    if (file.exists("user_data.csv")) {
+      file_info <- file.info("user_data.csv")
+      paste("Last saved:", format(file_info$mtime, "%Y-%m-%d %H:%M:%S"))
+    } else {
+      "Never saved"
+    }
+  })
+  
+  output$total_records <- renderText({
+    paste("Total records:", nrow(users()))
+  })
+  
+  # Backup table
+  output$backup_table <- DT::renderDataTable({
+    backup_list <- list_backups()
+    if (nrow(backup_list) > 0) {
+      DT::datatable(
+        backup_list,
+        options = list(
+          pageLength = 5,
+          dom = 't',
+          ordering = FALSE
+        ),
+        colnames = c("File", "Date", "Size (bytes)"),
+        class = 'display compact'
+      )
+    }
   })
 }
 
